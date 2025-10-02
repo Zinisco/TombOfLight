@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.UI;
 
 [RequireComponent(typeof(PickUpItem), typeof(Rigidbody))]
 public class Orb : MonoBehaviour
@@ -16,6 +17,10 @@ public class Orb : MonoBehaviour
     [Tooltip("Cooldown to avoid double-counting multiple contacts in one crash.")]
     [SerializeField] private float damageCooldown = 1f;
 
+    [Header("UI")]
+    [SerializeField] private Slider carryTimeSlider; // Assign in Inspector
+    [SerializeField] private float sliderSmoothSpeed = 5f;   // smoothness for draining UI
+
     private PickUpItem pickUp;
     private Rigidbody rb;
     private float carryTimer;
@@ -32,6 +37,14 @@ public class Orb : MonoBehaviour
 
         pickUp.OnPickedUp += HandlePickedUp;
         pickUp.OnDropped += HandleDropped;
+
+        if (carryTimeSlider != null)
+        {
+            carryTimeSlider.minValue = 0f;
+            carryTimeSlider.maxValue = maxCarryTime;
+            carryTimeSlider.value = maxCarryTime;
+            carryTimeSlider.gameObject.SetActive(false); // hidden by default
+        }
     }
 
     void OnDestroy()
@@ -50,6 +63,19 @@ public class Orb : MonoBehaviour
         if (pickUp.IsCarried)
         {
             carryTimer += Time.deltaTime;
+
+            float remainingTime = Mathf.Clamp(maxCarryTime - carryTimer, 0f, maxCarryTime);
+
+            // Smoothly update UI to make it tick down
+            if (carryTimeSlider != null)
+            {
+                carryTimeSlider.value = Mathf.Lerp(
+                    carryTimeSlider.value,
+                    remainingTime,
+                    Time.deltaTime * sliderSmoothSpeed
+                );
+            }
+
             if (carryTimer >= maxCarryTime)
                 ForceDrop();
         }
@@ -58,30 +84,40 @@ public class Orb : MonoBehaviour
     private void HandlePickedUp(GameObject player)
     {
         carryTimer = 0f;
-        // No durability change here.
+
+        if (carryTimeSlider != null)
+        {
+            carryTimeSlider.value = maxCarryTime; // start full
+            carryTimeSlider.gameObject.SetActive(true); // show when carried
+        }
     }
 
     private void HandleDropped(GameObject player)
     {
-        // Just note the time so we ignore immediate "joint pop" collisions.
         lastDropTime = Time.time;
+
+        if (carryTimeSlider != null)
+        {
+            carryTimeSlider.gameObject.SetActive(false); // hide on drop
+        }
     }
 
     private void ForceDrop()
     {
         carryTimer = 0f;
         pickUp.Drop();
-        Debug.Log("Orb dropped due to weight!");
+
+        if (carryTimeSlider != null)
+            carryTimeSlider.gameObject.SetActive(false);
+
+        Debug.Log("Orb dropped due to max carry time!");
     }
 
     private void OnCollisionEnter(Collision collision)
     {
         if (shattered) return;
 
-        // Ignore immediate post-drop joint cleanup
         if (Time.time - lastDropTime < postDropGrace) return;
-
-        // Avoid counting multiple contacts for the same crash
         if (Time.time - lastDamageTime < damageCooldown) return;
 
         float impactSpeed = collision.relativeVelocity.magnitude;
@@ -89,19 +125,15 @@ public class Orb : MonoBehaviour
 
         lastDamageTime = Time.time;
 
-        // Always just 1 durability, carried or dropped
-        int damage = 1;
-
-        ApplyDamage(damage, impactSpeed, collision.GetContact(0).point);
+        ApplyDamage(1, impactSpeed, collision.GetContact(0).point);
     }
-
 
     private void ApplyDamage(int amount, float impactSpeed, Vector3 hitPoint)
     {
         if (shattered) return;
 
         currentDurability -= amount;
-        Debug.Log($"Orb took {amount} damage from impact ({impactSpeed:F1} m/s). Durability left: {currentDurability}");
+        Debug.Log($"Orb took {amount} damage ({impactSpeed:F1} m/s). Durability left: {currentDurability}");
 
         if (currentDurability <= 0)
             Shatter(hitPoint);
@@ -114,10 +146,10 @@ public class Orb : MonoBehaviour
 
         if (orbLight != null) orbLight.enabled = false;
 
-        // Optional: particles / sound here
-        Debug.Log("Orb shattered! Game Over.");
+        if (carryTimeSlider != null)
+            carryTimeSlider.gameObject.SetActive(false);
 
-        // TODO: GameManager lose condition
+        Debug.Log("Orb shattered! Game Over.");
         Destroy(gameObject);
     }
 }

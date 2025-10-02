@@ -1,5 +1,6 @@
 using UnityEngine;
 using System;
+using UnityEngine.UI;
 
 [RequireComponent(typeof(Rigidbody))]
 public class PickUpItem : MonoBehaviour, IInteractable
@@ -13,6 +14,14 @@ public class PickUpItem : MonoBehaviour, IInteractable
     [SerializeField] private bool allowDropOnSpin = false;
     [SerializeField] private float spinDropThreshold = 15f; // sensitivity: how hard you can spin before drop
 
+    [Header("Throw Settings")]
+    private float throwHoldTime = 0f;   // track how long button held
+    [SerializeField] private float holdToThrowTime = 0.25f; // tap < this = drop, hold >= this = throw
+    [SerializeField] private float minThrowForce = 4f; // baseline gentle toss
+    [SerializeField] private float maxThrowForce = 15f;
+    [SerializeField] private float chargeRate = 10f;
+    private float currentThrowForce = 0f;
+    private bool isChargingThrow = false;
 
     [Header("Spring Settings")]
     [SerializeField] private float followStrength = 50f;      // how hard it snaps back
@@ -20,13 +29,14 @@ public class PickUpItem : MonoBehaviour, IInteractable
     [SerializeField] private float maxFollowDistance = 3f;    // break distance (auto drop)
     [SerializeField] private Vector3 holdOffset = new Vector3(0, -0.2f, 0.6f);
 
+    [Header("UI")]
+    [SerializeField] private Slider chargeSlider; // assign in Inspector
+
     private OutlineController outline;
     private Rigidbody rb;
     private Transform carryAnchor;
     private GameObject currentCarrier;
     private bool isCarried = false;
-
-    private Vector3 velocitySmoothed;
 
     public event Action<GameObject> OnPickedUp;
     public event Action<GameObject> OnDropped;
@@ -35,40 +45,36 @@ public class PickUpItem : MonoBehaviour, IInteractable
     {
         outline = GetComponent<OutlineController>();
         rb = GetComponent<Rigidbody>();
+
+        if (chargeSlider != null)
+        {
+            chargeSlider.gameObject.SetActive(false); // hide by default
+            chargeSlider.minValue = minThrowForce;
+            chargeSlider.maxValue = maxThrowForce;
+            chargeSlider.value = minThrowForce;
+        }
+    }
+
+    private void Update()
+    {
+        if (isCarried && isChargingThrow)
+        {
+            throwHoldTime += Time.deltaTime;
+            currentThrowForce += chargeRate * Time.deltaTime;
+            currentThrowForce = Mathf.Min(currentThrowForce, maxThrowForce);
+
+            // 🔹 Update UI while charging
+            if (chargeSlider != null)
+            {
+                chargeSlider.value = currentThrowForce;
+            }
+        }
     }
 
     public void Interact(GameObject player)
     {
-        if (isCarried) Drop();
-        else PickUp(player);
-    }
-
-    private void PickUp(GameObject player)
-    {
-        if (isCarried) return;
-
-        currentCarrier = player;
-        carryAnchor = player.GetComponent<PlayerCarryAnchor>()?.carryAnchor;
-
-        if (carryAnchor == null)
-        {
-            Debug.LogWarning("Player has no carryAnchor assigned!");
-            return;
-        }
-
-        isCarried = true;
-
-        var movement = currentCarrier.GetComponent<PlayerMovement>();
-        if (disableRunning && movement != null) movement.SetCanRun(false);
-        if (disableJumpingWhileHeld && movement != null) movement.SetCanJump(false);
-
-        rb.useGravity = !disableGravityWhileHeld;
-        rb.isKinematic = false;
-        rb.interpolation = RigidbodyInterpolation.Interpolate;
-        rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
-
-        Debug.Log($"{gameObject.name} picked up with spring method!");
-        OnPickedUp?.Invoke(currentCarrier);
+        if (!isCarried)
+            PickUp(player);
     }
 
     private void FixedUpdate()
@@ -89,7 +95,7 @@ public class PickUpItem : MonoBehaviour, IInteractable
         var movement = currentCarrier.GetComponent<PlayerMovement>();
         float angularSpeed = movement?.GetLookDeltaMagnitude() ?? 0f;
 
-        //  If orb allows drop on spin and angular speed exceeds threshold, drop
+        // If orb allows drop on spin and angular speed exceeds threshold, drop
         if (allowDropOnSpin && angularSpeed >= spinDropThreshold)
         {
             Debug.Log($"{gameObject.name} dropped due to fast spin!");
@@ -105,11 +111,74 @@ public class PickUpItem : MonoBehaviour, IInteractable
         rb.AddForce(springForce, ForceMode.Acceleration);
     }
 
+    private void PickUp(GameObject player)
+    {
+        if (isCarried)
+        {
+            Debug.Log("PickUp called but already carried");
+            return;
+        }
+
+        Debug.Log("PickUp called on " + gameObject.name);
+
+        currentCarrier = player;
+        carryAnchor = player.GetComponent<PlayerCarryAnchor>()?.carryAnchor;
+
+        if (carryAnchor == null)
+        {
+            Debug.LogWarning("Player has no carryAnchor assigned!");
+            return;
+        }
+
+        isCarried = true;
+
+        // Subscribe to throw events ONCE
+        var input = GameInput.Instance;
+        if (input != null)
+        {
+            Debug.Log(">>> Subscribing to throw events via GameInput.Instance");
+            input.OnThrowStart += HandleThrowStart;
+            input.OnThrowRelease += HandleThrowRelease;
+        }
+        else
+        {
+            Debug.LogError("GameInput.Instance not found in scene!");
+        }
+
+        // Disable movement if needed
+        var movement = currentCarrier.GetComponent<PlayerMovement>();
+        if (disableRunning && movement != null) movement.SetCanRun(false);
+        if (disableJumpingWhileHeld && movement != null) movement.SetCanJump(false);
+
+        rb.useGravity = !disableGravityWhileHeld;
+        rb.isKinematic = false;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+
+        Debug.Log($"{gameObject.name} picked up with spring method!");
+        OnPickedUp?.Invoke(currentCarrier);
+    }
 
 
     public void Drop()
     {
         if (!isCarried) return;
+
+        // Unsubscribe ONCE when dropped
+        var input = currentCarrier?.GetComponent<GameInput>();
+        if (input != null)
+        {
+            Debug.Log("Unsubscribing from throw events");
+            input.OnThrowStart -= HandleThrowStart;
+            input.OnThrowRelease -= HandleThrowRelease;
+        }
+
+        if (chargeSlider != null)
+        {
+            chargeSlider.value = 0f;
+            chargeSlider.gameObject.SetActive(false);
+        }
+
         isCarried = false;
 
         if (currentCarrier != null)
@@ -133,6 +202,66 @@ public class PickUpItem : MonoBehaviour, IInteractable
         currentCarrier = null;
         carryAnchor = null;
     }
+
+    private void HandleThrowStart(object sender, EventArgs e)
+    {
+        Debug.Log("Throw started (PickUpItem)");
+        if (!isCarried) return;
+
+        isChargingThrow = true;
+        throwHoldTime = 0f;
+        currentThrowForce = minThrowForce;
+
+
+        // 🔹 Show UI
+        if (chargeSlider != null)
+        {
+            float normalized = (currentThrowForce - minThrowForce) / (maxThrowForce - minThrowForce);
+            chargeSlider.value = Mathf.Clamp01(normalized);
+
+            chargeSlider.gameObject.SetActive(true);
+        }
+    }
+
+    private void HandleThrowRelease(object sender, EventArgs e)
+    {
+        Debug.Log("Throw released (PickUpItem)");
+        if (!isCarried) return;
+
+        isChargingThrow = false;
+
+        // Hide UI
+        if (chargeSlider != null)
+            chargeSlider.gameObject.SetActive(false);
+
+        if (throwHoldTime < holdToThrowTime)
+        {
+            Debug.Log($"{gameObject.name} gently dropped (tap)");
+            Drop();
+        }
+        else
+        {
+            Throw();
+        }
+    }
+
+    private void Throw()
+    {
+        float finalForce = Mathf.Clamp(currentThrowForce, minThrowForce, maxThrowForce);
+
+        Camera cam = currentCarrier?.GetComponentInChildren<Camera>();
+        Drop();
+
+        if (cam != null)
+        {
+            rb.AddForce(cam.transform.forward * finalForce, ForceMode.Impulse);
+            Debug.Log($"{gameObject.name} thrown with force {finalForce}");
+        }
+
+        currentThrowForce = 0f;
+        throwHoldTime = 0f;
+    }
+
 
     public bool IsCarried => isCarried;
     public GameObject CurrentCarrier => currentCarrier;
