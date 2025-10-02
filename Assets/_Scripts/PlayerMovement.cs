@@ -20,6 +20,7 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private float lookSensitivity = 0.2f;
     [SerializeField] private float controllerLookSensitivity = 0.7f;
     [SerializeField] private Transform cam;
+    private Vector2 lastMouseDelta;
 
     public float MouseSensitivity { get => lookSensitivity; set => lookSensitivity = value; }
     public float ControllerSensitivity { get => controllerLookSensitivity; set => controllerLookSensitivity = value; }
@@ -83,6 +84,8 @@ public class PlayerMovement : MonoBehaviour
     {
         Vector2 mouseDelta = gameInput.GetMouseDelta();
         mouseDelta = Vector2.ClampMagnitude(mouseDelta, 10f);
+
+        lastMouseDelta = mouseDelta; // store for orb drag
 
         float sensitivity = GameInput.Instance.IsGamepadActive ? controllerLookSensitivity : lookSensitivity;
         mouseDelta *= sensitivity;
@@ -165,6 +168,8 @@ public class PlayerMovement : MonoBehaviour
             Gizmos.DrawWireSphere(bottom + Vector3.up * 0.1f, controller.radius * 0.95f);
         }
     }
+
+    public float GetLookDeltaMagnitude() => lastMouseDelta.magnitude;
 
 }
 

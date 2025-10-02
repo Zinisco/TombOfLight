@@ -11,12 +11,10 @@ public class Orb : MonoBehaviour
     [Header("Impact Settings")]
     [Tooltip("Minimum collision speed (m/s) that counts as damage.")]
     [SerializeField] private float minBreakSpeed = 6f;
-    [Tooltip("Speed that instantly breaks all remaining durability.")]
-    [SerializeField] private float oneHitBreakSpeed = 14f;
     [Tooltip("Small grace window after drop so joint cleanup doesn't count as an impact.")]
-    [SerializeField] private float postDropGrace = 0.08f;
+    [SerializeField] private float postDropGrace = 0.1f;
     [Tooltip("Cooldown to avoid double-counting multiple contacts in one crash.")]
-    [SerializeField] private float damageCooldown = 0.15f;
+    [SerializeField] private float damageCooldown = 1f;
 
     private PickUpItem pickUp;
     private Rigidbody rb;
@@ -65,8 +63,7 @@ public class Orb : MonoBehaviour
 
     private void HandleDropped(GameObject player)
     {
-        // Do NOT reduce durability here.
-        // Just note the time so we ignore immediate joint pop collisions.
+        // Just note the time so we ignore immediate "joint pop" collisions.
         lastDropTime = Time.time;
     }
 
@@ -81,35 +78,23 @@ public class Orb : MonoBehaviour
     {
         if (shattered) return;
 
-        // Ignore while carried or during tiny grace window after dropping.
-        if (pickUp != null && pickUp.IsCarried) return;
+        // Ignore immediate post-drop joint cleanup
         if (Time.time - lastDropTime < postDropGrace) return;
 
-        // Avoid counting a single crash multiple times
+        // Avoid counting multiple contacts for the same crash
         if (Time.time - lastDamageTime < damageCooldown) return;
 
-        // How hard did we hit?
-        // relativeVelocity is reliable for "how fast the two bodies were moving into each other".
         float impactSpeed = collision.relativeVelocity.magnitude;
-
         if (impactSpeed < minBreakSpeed) return;
 
         lastDamageTime = Time.time;
 
-        int damage;
-        if (impactSpeed >= oneHitBreakSpeed)
-        {
-            // Big slam: break all remaining durability
-            damage = currentDurability;
-        }
-        else
-        {
-            // Normal hard impact
-            damage = 1;
-        }
+        // Always just 1 durability, carried or dropped
+        int damage = 1;
 
         ApplyDamage(damage, impactSpeed, collision.GetContact(0).point);
     }
+
 
     private void ApplyDamage(int amount, float impactSpeed, Vector3 hitPoint)
     {
@@ -129,11 +114,10 @@ public class Orb : MonoBehaviour
 
         if (orbLight != null) orbLight.enabled = false;
 
-        // Optional: particles / sound here, then disable or destroy
-        // e.g., Instantiate(shatterVfx, where, Quaternion.identity);
-
+        // Optional: particles / sound here
         Debug.Log("Orb shattered! Game Over.");
-        // TODO: trigger GameManager lose condition
-        // Destroy(gameObject);
+
+        // TODO: GameManager lose condition
+        Destroy(gameObject);
     }
 }

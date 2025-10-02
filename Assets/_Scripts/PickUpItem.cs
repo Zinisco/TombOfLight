@@ -9,27 +9,32 @@ public class PickUpItem : MonoBehaviour, IInteractable
     [SerializeField] private bool disableRunning = false;
     [SerializeField] private bool disableJumpingWhileHeld = false;
 
+    [Header("Special Settings")]
+    [SerializeField] private bool allowDropOnSpin = false;
+    [SerializeField] private float spinDropThreshold = 15f; // sensitivity: how hard you can spin before drop
+
+
+    [Header("Spring Settings")]
+    [SerializeField] private float followStrength = 50f;      // how hard it snaps back
+    [SerializeField] private float followDamping = 5f;        // how much it resists overshoot
+    [SerializeField] private float maxFollowDistance = 3f;    // break distance (auto drop)
+    [SerializeField] private Vector3 holdOffset = new Vector3(0, -0.2f, 0.6f);
+
     private OutlineController outline;
     private Rigidbody rb;
-    private FixedJoint carryJoint;
     private Transform carryAnchor;
     private GameObject currentCarrier;
     private bool isCarried = false;
 
-    // ?? Events
-    public event Action<GameObject> OnPickedUp;  // passes player
-    public event Action<GameObject> OnDropped;   // passes player
+    private Vector3 velocitySmoothed;
+
+    public event Action<GameObject> OnPickedUp;
+    public event Action<GameObject> OnDropped;
 
     void Awake()
     {
         outline = GetComponent<OutlineController>();
         rb = GetComponent<Rigidbody>();
-    }
-
-    void OnDestroy()
-    {
-        if (carryJoint != null)
-            Destroy(carryJoint);
     }
 
     public void Interact(GameObject player)
@@ -42,7 +47,7 @@ public class PickUpItem : MonoBehaviour, IInteractable
     {
         if (isCarried) return;
 
-        currentCarrier = player; // ✅ assign first
+        currentCarrier = player;
         carryAnchor = player.GetComponent<PlayerCarryAnchor>()?.carryAnchor;
 
         if (carryAnchor == null)
@@ -53,81 +58,74 @@ public class PickUpItem : MonoBehaviour, IInteractable
 
         isCarried = true;
 
-        // Disable movement abilities if needed
         var movement = currentCarrier.GetComponent<PlayerMovement>();
-        if (disableRunning && movement != null)
-            movement.SetCanRun(false);
-        if (disableJumpingWhileHeld && movement != null)
-            movement.SetCanJump(false);
+        if (disableRunning && movement != null) movement.SetCanRun(false);
+        if (disableJumpingWhileHeld && movement != null) movement.SetCanJump(false);
 
-        // Ensure anchor has a Rigidbody
-        Rigidbody anchorRb = carryAnchor.GetComponent<Rigidbody>();
-        if (anchorRb == null)
-        {
-            anchorRb = carryAnchor.gameObject.AddComponent<Rigidbody>();
-            anchorRb.isKinematic = true;
-        }
-
-        // Snap to anchor
-        transform.position = carryAnchor.position;
-        transform.rotation = carryAnchor.rotation;
-
-        // Add joint
-        carryJoint = gameObject.AddComponent<FixedJoint>();
-        carryJoint.connectedBody = anchorRb;
-        carryJoint.breakForce = Mathf.Infinity;
-        carryJoint.breakTorque = Mathf.Infinity;
-
-        // Configure rigidbody
+        rb.useGravity = !disableGravityWhileHeld;
         rb.isKinematic = false;
-        rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
-        if (disableGravityWhileHeld) rb.useGravity = false;
-
-        Debug.Log($"{gameObject.name} picked up!");
+        Debug.Log($"{gameObject.name} picked up with spring method!");
         OnPickedUp?.Invoke(currentCarrier);
     }
+
+    private void FixedUpdate()
+    {
+        if (!isCarried || carryAnchor == null) return;
+
+        // Desired target position = anchor + offset
+        Vector3 targetPos = carryAnchor.TransformPoint(holdOffset);
+        Vector3 toTarget = targetPos - transform.position;
+
+        // If it’s too far away (player ran off), auto drop
+        if (toTarget.magnitude > maxFollowDistance)
+        {
+            Drop();
+            return;
+        }
+
+        var movement = currentCarrier.GetComponent<PlayerMovement>();
+        float angularSpeed = movement?.GetLookDeltaMagnitude() ?? 0f;
+
+        //  If orb allows drop on spin and angular speed exceeds threshold, drop
+        if (allowDropOnSpin && angularSpeed >= spinDropThreshold)
+        {
+            Debug.Log($"{gameObject.name} dropped due to fast spin!");
+            Drop();
+            return;
+        }
+
+        // Add drag multiplier based on rotation speed
+        float dragMultiplier = 1f + angularSpeed * 0.2f;
+
+        // Spring force
+        Vector3 springForce = toTarget * followStrength - rb.linearVelocity * (followDamping * dragMultiplier);
+        rb.AddForce(springForce, ForceMode.Acceleration);
+    }
+
+
 
     public void Drop()
     {
         if (!isCarried) return;
-
         isCarried = false;
-
-        if (carryJoint != null)
-        {
-            Destroy(carryJoint);
-            carryJoint = null;
-        }
-
-        rb.useGravity = true;
-        rb.isKinematic = false;
 
         if (currentCarrier != null)
         {
-            // ?? Inherit carrier movement velocity if available
+            var movement = currentCarrier.GetComponent<PlayerMovement>();
+            if (disableRunning && movement != null) movement.SetCanRun(true);
+            if (disableJumpingWhileHeld && movement != null) movement.SetCanJump(true);
+
+            // Inherit some velocity on drop
             Vector3 carrierVelocity = Vector3.zero;
-
             var controller = currentCarrier.GetComponent<CharacterController>();
-            if (controller != null)
-                carrierVelocity = controller.velocity;
-
-            // Optional: if you later add Rigidbody-based players
-            var carrierRb = currentCarrier.GetComponent<Rigidbody>();
-            if (carrierRb != null)
-                carrierVelocity = carrierRb.linearVelocity;
-
-            // ?? Apply inherited velocity + toss forward
-            rb.linearVelocity = carrierVelocity;
-            rb.AddForce(currentCarrier.GetComponentInChildren<Camera>().transform.forward * 2f, ForceMode.Impulse);
+            if (controller != null) carrierVelocity = controller.velocity;
+            rb.linearVelocity += carrierVelocity;
         }
 
-        if (disableRunning && currentCarrier != null)
-            currentCarrier.GetComponent<PlayerMovement>()?.SetCanRun(true);
-
-        if (disableJumpingWhileHeld && currentCarrier != null)
-            currentCarrier.GetComponent<PlayerMovement>()?.SetCanJump(true);
+        rb.useGravity = true;
 
         Debug.Log($"{gameObject.name} dropped!");
         OnDropped?.Invoke(currentCarrier);
@@ -135,7 +133,6 @@ public class PickUpItem : MonoBehaviour, IInteractable
         currentCarrier = null;
         carryAnchor = null;
     }
-
 
     public bool IsCarried => isCarried;
     public GameObject CurrentCarrier => currentCarrier;
