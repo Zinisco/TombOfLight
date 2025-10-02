@@ -581,7 +581,7 @@ Light:
   serializedVersion: 11
   m_Type: 2
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_Intensity: 1
+  m_Intensity: 5
   m_Range: 30
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -1004,7 +1004,7 @@ Transform:
   m_GameObject: {fileID: 524854375}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.1, z: 1.2}
+  m_LocalPosition: {x: 0, y: 0.1, z: 1}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -2421,7 +2421,9 @@ MonoBehaviour:
   maxCarryTime: 30
   maxDurability: 3
   orbLight: {fileID: 365938026}
-  minBreakSpeed: 4
+  maxLifespanTime: 300
+  lifespanDamagePenalty: 30
+  minBreakSpeed: 5
   postDropGrace: 0.1
   damageCooldown: 2
   carryTimeSlider: {fileID: 1371600166}
@@ -2429,6 +2431,10 @@ MonoBehaviour:
   startTemperature: 8500
   endTemperature: 1500
   orbRenderer: {fileID: 161947847}
+  startIntensity: 5
+  endIntensity: 0
+  startRange: 30
+  endRange: 0
 --- !u!135 &2016802018
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -2527,8 +2533,8 @@ MonoBehaviour:
   spinDropThreshold: 15
   holdToThrowTime: 0.25
   minThrowForce: 6
-  maxThrowForce: 80
-  chargeRate: 40
+  maxThrowForce: 50
+  chargeRate: 25
   followStrength: 50
   followDamping: 5
   maxFollowDistance: 3

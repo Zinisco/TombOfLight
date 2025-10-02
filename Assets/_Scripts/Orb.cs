@@ -4,12 +4,16 @@ using UnityEngine.UI;
 [RequireComponent(typeof(PickUpItem), typeof(Rigidbody))]
 public class Orb : MonoBehaviour
 {
+
     [Header("Orb Settings")]
     [SerializeField] private float maxCarryTime = 30f;
     [SerializeField] private int maxDurability = 3;
     [SerializeField] private Light orbLight;
+    [SerializeField] private float maxLifespanTime = 120f; // total life before burn-out
+    private float lifespanTimer;
 
     [Header("Impact Settings")]
+    [SerializeField] private float lifespanDamagePenalty = 30f;
     [Tooltip("Minimum collision speed (m/s) that counts as damage.")]
     [SerializeField] private float minBreakSpeed = 6f;
     [Tooltip("Small grace window after drop so joint cleanup doesn't count as an impact.")]
@@ -27,6 +31,15 @@ public class Orb : MonoBehaviour
     [SerializeField] private Renderer orbRenderer;  // assign the orb mesh in Inspector
     private Material orbMaterial;
 
+    [Header("Light Intensity & Range")]
+    [SerializeField] private float startIntensity = 5f;
+    [SerializeField] private float endIntensity = 0.2f;
+    [SerializeField] private float startRange = 30f;
+    [SerializeField] private float endRange = 2f;
+
+    [Header("Flicker Settings")]
+    [SerializeField] private float flickerSpeed = 15f;
+    [SerializeField] private float flickerIntensity = 0.3f; // how strong the flicker is
 
     private PickUpItem pickUp;
     private Rigidbody rb;
@@ -50,7 +63,6 @@ public class Orb : MonoBehaviour
             orbMaterial = orbRenderer.material; // gets a unique instance
             orbMaterial.EnableKeyword("_EMISSION");
         }
-
 
         if (carryTimeSlider != null)
         {
@@ -80,44 +92,41 @@ public class Orb : MonoBehaviour
     {
         if (shattered) return;
 
+        // --- Lifespan drains always ---
+        lifespanTimer += Time.deltaTime;
+        float remainingLife = Mathf.Clamp(maxLifespanTime - lifespanTimer, 0f, maxLifespanTime);
+        float lifeFactor = remainingLife / maxLifespanTime; // 1 - 0
+
+        // --- Carry drains only when carried ---
+        float carryFactor = 0f;
         if (pickUp.IsCarried)
         {
             carryTimer += Time.deltaTime;
+            float remainingCarry = Mathf.Clamp(maxCarryTime - carryTimer, 0f, maxCarryTime);
+            carryFactor = 1f - (remainingCarry / maxCarryTime); // 0 - 1 only while carried
 
-            float remainingTime = Mathf.Clamp(maxCarryTime - carryTimer, 0f, maxCarryTime);
-
-            // Smoothly update UI to tick down
+            // Smooth UI
             if (carryTimeSlider != null)
             {
                 carryTimeSlider.value = Mathf.Lerp(
                     carryTimeSlider.value,
-                    remainingTime,
+                    remainingCarry,
                     Time.deltaTime * sliderSmoothSpeed
                 );
             }
 
-            // Update light temperature over time
-            if (orbLight != null)
-            {
-                float t = 1f - (remainingTime / maxCarryTime);
-                float kelvin = Mathf.Lerp(startTemperature, endTemperature, t);
-
-                // Light
-                orbLight.colorTemperature = kelvin;
-
-                // Material emission
-                if (orbMaterial != null)
-                {
-                    Color emissionColor = ColorFromTemperature(kelvin) * Mathf.LinearToGammaSpace(2f);
-                    orbMaterial.SetColor("_EmissionColor", emissionColor);
-                }
-            }
-
-
             if (carryTimer >= maxCarryTime)
                 ForceDrop();
         }
+
+        // --- Update visuals ---
+        UpdateOrbVisuals(lifeFactor, carryFactor, (float)currentDurability / maxDurability);
+
+        // --- Burn out ---
+        if (lifespanTimer >= maxLifespanTime)
+            Shatter(transform.position);
     }
+
 
     private void HandlePickedUp(GameObject player)
     {
@@ -139,6 +148,16 @@ public class Orb : MonoBehaviour
 
         if (carryTimeSlider != null)
             carryTimeSlider.gameObject.SetActive(false); // hide on drop
+
+        // Reset color temp when dropped
+        if (orbLight != null)
+            orbLight.colorTemperature = startTemperature;
+
+        if (orbMaterial != null)
+        {
+            Color emissionColor = ColorFromTemperature(startTemperature) * Mathf.LinearToGammaSpace(orbLight.intensity);
+            orbMaterial.SetColor("_EmissionColor", emissionColor);
+        }
     }
 
     private void ForceDrop()
@@ -149,8 +168,20 @@ public class Orb : MonoBehaviour
         if (carryTimeSlider != null)
             carryTimeSlider.gameObject.SetActive(false);
 
-        Debug.Log("Orb dropped due to max carry time!");
+        // Reset color temp and emission when force-dropped
+        if (orbLight != null)
+            orbLight.colorTemperature = startTemperature;
+
+        if (orbMaterial != null)
+        {
+            Color emissionColor = ColorFromTemperature(startTemperature) * Mathf.LinearToGammaSpace(orbLight.intensity);
+            orbMaterial.SetColor("_EmissionColor", emissionColor);
+        }
+
+        Debug.Log("Orb force-dropped!");
     }
+
+
 
     private void OnCollisionEnter(Collision collision)
     {
@@ -168,15 +199,47 @@ public class Orb : MonoBehaviour
     }
 
     private void ApplyDamage(int amount, float impactSpeed, Vector3 hitPoint)
+{
+    if (shattered) return;
+
+    // --- Durability loss ---
+    currentDurability -= amount;
+
+    // --- Lifespan penalty ---
+    float penalty = lifespanDamagePenalty * amount;
+
+    // Optional: scale penalty by impact speed for harder hits
+    float speedFactor = Mathf.Clamp01(impactSpeed / 20f); // normalizes speed
+    penalty *= (1f + speedFactor * 0.5f); // up to +50% extra
+
+    lifespanTimer += penalty;
+
+    Debug.Log(
+        $"Orb took {amount} damage ({impactSpeed:F1} m/s). " +
+        $"Durability left: {currentDurability}. " +
+        $"Lifespan shortened by {penalty:F1}s (remaining: {Mathf.Max(0, maxLifespanTime - lifespanTimer):F1}s)."
+    );
+
+    if (currentDurability <= 0)
+        Shatter(hitPoint);
+}
+
+
+    public void Recharge()
     {
-        if (shattered) return;
+        carryTimer = 0f;
+        lifespanTimer = 0f; // RESET lifespan
+        currentDurability = maxDurability;
 
-        currentDurability -= amount;
-        Debug.Log($"Orb took {amount} damage ({impactSpeed:F1} m/s). Durability left: {currentDurability}");
+        if (carryTimeSlider != null)
+            carryTimeSlider.value = maxCarryTime;
 
-        if (currentDurability <= 0)
-            Shatter(hitPoint);
+        UpdateOrbVisuals(1f, 1f, 1f);
+
+        Debug.Log("Orb recharged at station!");
     }
+
+
 
     private void Shatter(Vector3 where)
     {
@@ -191,6 +254,46 @@ public class Orb : MonoBehaviour
         Debug.Log("Orb shattered! Game Over.");
         Destroy(gameObject);
     }
+
+    private void UpdateOrbVisuals(float lifeFactor, float carryFactor, float durabilityFactor)
+    {
+        if (orbLight == null) return;
+
+        // Lifespan controls brightness
+        float tLife = 1f - lifeFactor;
+        float baseIntensity = Mathf.Lerp(startIntensity, endIntensity, tLife) * durabilityFactor;
+        float range = Mathf.Lerp(startRange, endRange, tLife) * durabilityFactor;
+
+        // Flicker if on last hit
+        float finalIntensity = baseIntensity;
+        float flickerFactor = 1f;
+
+        if (currentDurability == 1)
+        {
+            // Use Perlin noise for chaotic flicker
+            float noise = Mathf.PerlinNoise(Time.time * flickerSpeed, 0f); // 0-1
+            float jitter = 1f - (noise * flickerIntensity);
+            flickerFactor = jitter;
+            finalIntensity = baseIntensity * jitter;
+        }
+
+
+        orbLight.intensity = finalIntensity;
+        orbLight.range = range;
+
+        // Carry controls color temp
+        float kelvin = Mathf.Lerp(startTemperature, endTemperature, carryFactor);
+        orbLight.colorTemperature = kelvin;
+
+        // Emission matches color and flicker
+        if (orbMaterial != null)
+        {
+            Color emissionColor = ColorFromTemperature(kelvin)
+                                  * Mathf.LinearToGammaSpace(finalIntensity * flickerFactor);
+            orbMaterial.SetColor("_EmissionColor", emissionColor);
+        }
+    }
+
 
     private Color ColorFromTemperature(float kelvin)
     {
