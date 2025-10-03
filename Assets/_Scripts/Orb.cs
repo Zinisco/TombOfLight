@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -10,6 +11,9 @@ public class Orb : MonoBehaviour
     [SerializeField] private int maxDurability = 3;
     [SerializeField] private Light orbLight;
     [SerializeField] private float maxLifespanTime = 120f; // total life before burn-out
+    [SerializeField] private float pickupResetCooldown = 0.75f; // how long before pickup resets timer
+
+    private GameObject lastCarrier;
     private float lifespanTimer;
 
     [Header("Impact Settings")]
@@ -130,17 +134,27 @@ public class Orb : MonoBehaviour
 
     private void HandlePickedUp(GameObject player)
     {
-        carryTimer = 0f;
+        bool isDifferentCarrier = (lastCarrier != null && player != lastCarrier);
+        bool enoughTimePassed = (Time.time - lastDropTime) > pickupResetCooldown;
+
+        if (isDifferentCarrier || enoughTimePassed)
+        {
+            carryTimer = 0f; // normal reset
+        }
+
+        lastCarrier = player;
 
         if (carryTimeSlider != null)
         {
-            carryTimeSlider.value = maxCarryTime; // start full
-            carryTimeSlider.gameObject.SetActive(true); // show when carried
+            float remainingCarry = Mathf.Clamp(maxCarryTime - carryTimer, 0f, maxCarryTime);
+            carryTimeSlider.value = remainingCarry;
+            carryTimeSlider.gameObject.SetActive(true);
         }
 
         if (orbLight != null)
-            orbLight.colorTemperature = startTemperature; // reset
+            orbLight.colorTemperature = startTemperature;
     }
+
 
     private void HandleDropped(GameObject player)
     {
@@ -187,6 +201,14 @@ public class Orb : MonoBehaviour
     {
         if (shattered) return;
 
+        //  If orb is not carried and it hit the ground, reset carry timer
+        if (!pickUp.IsCarried)
+        {
+            ForceResetCarryTimer();
+            Debug.Log("[Orb] Carry timer reset due to ground collision.");
+        }
+
+        // --- Existing damage logic ---
         if (Time.time - lastDropTime < postDropGrace) return;
         if (Time.time - lastDamageTime < damageCooldown) return;
 
@@ -194,7 +216,6 @@ public class Orb : MonoBehaviour
         if (impactSpeed < minBreakSpeed) return;
 
         lastDamageTime = Time.time;
-
         ApplyDamage(1, impactSpeed, collision.GetContact(0).point);
     }
 
@@ -322,5 +343,103 @@ public class Orb : MonoBehaviour
 
         return new Color(r, g, b, 1f);
     }
+
+    public void RechargeStaged(float duration = 2f)
+    {
+        StopAllCoroutines();
+
+        // Calculate missing durability ONCE
+        int missingDurability = maxDurability - currentDurability;
+        if (missingDurability <= 0)
+        {
+            Debug.Log("[Orb] Already full durability, no staged recharge needed.");
+            return;
+        }
+
+        StartCoroutine(RechargeRoutine(duration, missingDurability, currentDurability));
+    }
+
+    public void ForceResetCarryTimer()
+    {
+        carryTimer = 0f;
+
+        if (carryTimeSlider != null)
+        {
+            carryTimeSlider.value = maxCarryTime;
+        }
+
+        if (orbLight != null)
+            orbLight.colorTemperature = startTemperature;
+
+        Debug.Log("[Orb] Carry timer forcibly reset (zone, ground hit, or transfer).");
+    }
+
+
+    private IEnumerator RechargeRoutine(float duration, int missingDurability, int startingDurability)
+    {
+        Debug.Log($"[Orb] Starting staged recharge with {missingDurability} booms...");
+
+        // Lifespan staged restore: fully reset by the last boom
+        float startLifespanTimer = lifespanTimer;
+        float targetLifespanTimer = 0f;
+
+        if (carryTimeSlider != null)
+            carryTimeSlider.value = maxCarryTime;
+
+        float stepDelay = duration / missingDurability;
+
+        for (int i = 1; i <= missingDurability; i++)
+        {
+            // --- Flicker before the boom ---
+            float flickerTime = stepDelay * 0.3f; // 30% of step time reserved for flicker
+            float elapsed = 0f;
+
+            while (elapsed < flickerTime)
+            {
+                elapsed += Time.deltaTime;
+
+                // Random light jitter
+                float noise = Mathf.PerlinNoise(Time.time * 30f, 0f); // fast noise
+                float jitter = Mathf.Lerp(0.8f, 1.2f, noise); // between 80–120%
+                orbLight.intensity *= jitter;
+
+                if (orbMaterial != null)
+                {
+                    Color emissionColor = ColorFromTemperature(startTemperature) *
+                                          Mathf.LinearToGammaSpace(orbLight.intensity);
+                    orbMaterial.SetColor("_EmissionColor", emissionColor);
+                }
+
+                yield return null;
+            }
+
+            // --- Wait remainder of step before boom ---
+            yield return new WaitForSeconds(stepDelay - flickerTime);
+
+            // --- BOOM: Durability restore ---
+            currentDurability = startingDurability + i;
+
+            // Lifespan staged restore
+            float fraction = (float)i / missingDurability;
+            lifespanTimer = Mathf.Lerp(startLifespanTimer, targetLifespanTimer, fraction);
+
+            // Visuals based on durability fraction
+            float durabilityFraction = (float)currentDurability / maxDurability;
+            orbLight.intensity = Mathf.Lerp(endIntensity, startIntensity, durabilityFraction);
+            orbLight.range = Mathf.Lerp(endRange, startRange, durabilityFraction);
+
+            if (orbMaterial != null)
+            {
+                Color emissionColor = ColorFromTemperature(startTemperature) *
+                                      Mathf.LinearToGammaSpace(orbLight.intensity);
+                orbMaterial.SetColor("_EmissionColor", emissionColor);
+            }
+
+            Debug.Log($"[Orb] BOOM {i}/{missingDurability} ? Durability {currentDurability}/{maxDurability}, Lifespan restored {(1f - (lifespanTimer / maxLifespanTime)) * 100f:F0}%");
+        }
+
+        Debug.Log("[Orb] Recharge complete!");
+    }
+
 
 }

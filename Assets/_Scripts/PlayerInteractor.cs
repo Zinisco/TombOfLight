@@ -44,7 +44,6 @@ public class PlayerInteractor : MonoBehaviour
 
             if (interactable != null)
             {
-                Debug.Log($"Found interactable: {interactable}");
 
                 if (currentTarget != interactable)
                 {

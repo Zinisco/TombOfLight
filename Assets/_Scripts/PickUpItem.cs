@@ -119,8 +119,6 @@ public class PickUpItem : MonoBehaviour, IInteractable
             return;
         }
 
-        Debug.Log("PickUp called on " + gameObject.name);
-
         currentCarrier = player;
         carryAnchor = player.GetComponent<PlayerCarryAnchor>()?.carryAnchor;
 
@@ -136,7 +134,6 @@ public class PickUpItem : MonoBehaviour, IInteractable
         var input = GameInput.Instance;
         if (input != null)
         {
-            Debug.Log(">>> Subscribing to throw events via GameInput.Instance");
             input.OnThrowStart += HandleThrowStart;
             input.OnThrowRelease += HandleThrowRelease;
         }
@@ -155,7 +152,6 @@ public class PickUpItem : MonoBehaviour, IInteractable
         rb.interpolation = RigidbodyInterpolation.Interpolate;
         rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
-        Debug.Log($"{gameObject.name} picked up with spring method!");
         OnPickedUp?.Invoke(currentCarrier);
     }
 
@@ -168,7 +164,6 @@ public class PickUpItem : MonoBehaviour, IInteractable
         var input = currentCarrier?.GetComponent<GameInput>();
         if (input != null)
         {
-            Debug.Log("Unsubscribing from throw events");
             input.OnThrowStart -= HandleThrowStart;
             input.OnThrowRelease -= HandleThrowRelease;
         }
